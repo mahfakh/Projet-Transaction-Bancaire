@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Infrastructure AWS pour le prototype Agentic AI Fraud Detection (Kinesis, DynamoDB, S3, IAM, CloudWatch)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'prototype'
+    AllowedValues: ['prototype', 'staging', 'production']
+
+Resources:
+  # 1. Flux d'ingestion Kinesis (F1, Architecture B)
+  TransactionKinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub 'banking-transactions-${Environment}'
+      ShardCount: 1
+      RetentionPeriodHours: 24
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: 'alias/aws/kinesis'
+
+  # 2. File de rejet DLQ SQS (F1)
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'fraud-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600 # 14 jours
+
+  # 3. Tables DynamoDB (F8, Architecture E)
+  AlertsDynamoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'FraudDetectionAlerts-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: 'alert_id'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'alert_id'
+          KeyType: 'HASH'
+      SSESpecification:
+        SSEEnabled: true
+
+  TransactionsDynamoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'FraudDetectionTransactions-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: 'transaction_id'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'transaction_id'
+          KeyType: 'HASH'
+      SSESpecification:
+        SSEEnabled: true
+
+  # 4. Bucket S3 pour artefacts & modèles (F8, Architecture E)
+  ArtifactsS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'fraud-detection-artifacts-${AWS::AccountId}-${Environment}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # 5. Topic SNS pour alertes critiques (Architecture G)
+  HighRiskAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'fraud-high-risk-alerts-${Environment}'
+
+  # 6. Observabilité CloudWatch (F9)
+  HighRiskAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'HighRiskFraudAlertsSurge-${Environment}'
+      MetricName: 'HighRiskAlertCount'
+      Namespace: 'BankingFraudDetection'
+      Statistic: 'Sum'
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      AlarmActions:
+        - !Ref HighRiskAlertTopic

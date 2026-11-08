@@ -1,0 +1,218 @@
+{
+  "model_version": "lgb_optimized_v2_20261105_175044",
+  "trained_at": "2026-11-05T17:50:44.596917",
+  "model_type": "LightGBM Classifier (Optimisé Feature Engineering + Cost-Weighting)",
+  "train_samples": 120000,
+  "val_samples": 30000,
+  "features_count": 81,
+  "evaluation": {
+    "roc_auc": 0.943,
+    "pr_auc": 0.734,
+    "threshold_evaluations": {
+      "threshold_0_2": {
+        "threshold": 0.2,
+        "recall": 0.7217,
+        "precision": 0.5753,
+        "f1_score": 0.6402,
+        "confusion_matrix": {
+          "tn": 28783,
+          "fp": 423,
+          "fn": 221,
+          "tp": 573
+        }
+      },
+      "threshold_0_25": {
+        "threshold": 0.25,
+        "recall": 0.6927,
+        "precision": 0.6517,
+        "f1_score": 0.6716,
+        "confusion_matrix": {
+          "tn": 28912,
+          "fp": 294,
+          "fn": 244,
+          "tp": 550
+        }
+      },
+      "threshold_0_35": {
+        "threshold": 0.35,
+        "recall": 0.6537,
+        "precision": 0.7655,
+        "f1_score": 0.7052,
+        "confusion_matrix": {
+          "tn": 29047,
+          "fp": 159,
+          "fn": 275,
+          "tp": 519
+        }
+      },
+      "threshold_0_5": {
+        "threshold": 0.5,
+        "recall": 0.5882,
+        "precision": 0.8522,
+        "f1_score": 0.696,
+        "confusion_matrix": {
+          "tn": 29125,
+          "fp": 81,
+          "fn": 327,
+          "tp": 467
+        }
+      }
+    },
+    "threshold_0_20": {
+      "threshold": 0.2,
+      "recall": 0.7217,
+      "precision": 0.5753,
+      "f1_score": 0.6402,
+      "confusion_matrix": {
+        "tn": 28783,
+        "fp": 423,
+        "fn": 221,
+        "tp": 573
+      }
+    },
+    "threshold_0_25": {
+      "threshold": 0.25,
+      "recall": 0.6927,
+      "precision": 0.6517,
+      "f1_score": 0.6716,
+      "confusion_matrix": {
+        "tn": 28912,
+        "fp": 294,
+        "fn": 244,
+        "tp": 550
+      }
+    },
+    "threshold_0_35": {
+      "threshold": 0.35,
+      "recall": 0.6537,
+      "precision": 0.7655,
+      "f1_score": 0.7052,
+      "confusion_matrix": {
+        "tn": 29047,
+        "fp": 159,
+        "fn": 275,
+        "tp": 519
+      }
+    },
+    "threshold_0_50": {
+      "threshold": 0.5,
+      "recall": 0.5882,
+      "precision": 0.8522,
+      "f1_score": 0.696,
+      "confusion_matrix": {
+        "tn": 29125,
+        "fp": 81,
+        "fn": 327,
+        "tp": 467
+      }
+    },
+    "confusion_matrix_at_0_20": {
+      "tn": 28783,
+      "fp": 423,
+      "fn": 221,
+      "tp": 573
+    }
+  },
+  "top_features": [
+    {
+      "feature": "card1",
+      "importance": 2615.0
+    },
+    {
+      "feature": "card2",
+      "importance": 2045.0
+    },
+    {
+      "feature": "TransactionAmt",
+      "importance": 1820.0
+    },
+    {
+      "feature": "addr1",
+      "importance": 1740.0
+    },
+    {
+      "feature": "amt_to_card1_mean_ratio",
+      "importance": 1566.0
+    },
+    {
+      "feature": "C13",
+      "importance": 1538.0
+    },
+    {
+      "feature": "amt_card1_zscore",
+      "importance": 1394.0
+    },
+    {
+      "feature": "hour_of_day",
+      "importance": 1331.0
+    },
+    {
+      "feature": "D15",
+      "importance": 1241.0
+    },
+    {
+      "feature": "id_02",
+      "importance": 1172.0
+    },
+    {
+      "feature": "D4",
+      "importance": 1148.0
+    },
+    {
+      "feature": "C1",
+      "importance": 1078.0
+    },
+    {
+      "feature": "P_emaildomain",
+      "importance": 992.0
+    },
+    {
+      "feature": "card5",
+      "importance": 981.0
+    },
+    {
+      "feature": "dist1",
+      "importance": 934.0
+    },
+    {
+      "feature": "id_31",
+      "importance": 924.0
+    },
+    {
+      "feature": "D10",
+      "importance": 908.0
+    },
+    {
+      "feature": "amt_decimal",
+      "importance": 902.0
+    },
+    {
+      "feature": "D2",
+      "importance": 855.0
+    },
+    {
+      "feature": "D1",
+      "importance": 801.0
+    },
+    {
+      "feature": "DeviceInfo",
+      "importance": 796.0
+    },
+    {
+      "feature": "C2",
+      "importance": 775.0
+    },
+    {
+      "feature": "day_of_week",
+      "importance": 763.0
+    },
+    {
+      "feature": "V307",
+      "importance": 614.0
+    },
+    {
+      "feature": "V310",
+      "importance": 603.0
+    }
+  ]
+}

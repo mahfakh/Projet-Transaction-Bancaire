@@ -1,0 +1,61 @@
+{
+  "Exp1_FeatureEngineering_Standard": {
+    "roc_auc": 0.9285,
+    "pr_auc": 0.6756,
+    "threshold": 0.5,
+    "f1_score": 0.5971,
+    "precision": 0.9224,
+    "recall": 0.4414,
+    "cm": {
+      "tn": 19469,
+      "fp": 19,
+      "fn": 286,
+      "tp": 226
+    }
+  },
+  "Exp2_ScalePosWeight_4_5": {
+    "roc_auc": 0.9295,
+    "pr_auc": 0.6728,
+    "threshold": 0.5,
+    "f1_score": 0.6497,
+    "precision": 0.8,
+    "recall": 0.5469,
+    "cm": {
+      "tn": 19418,
+      "fp": 70,
+      "fn": 232,
+      "tp": 280
+    }
+  },
+  "Exp3_SMOTE_Sampling": {
+    "roc_auc": 0.9201,
+    "pr_auc": 0.654,
+    "threshold": 0.5,
+    "f1_score": 0.5748,
+    "precision": 0.876,
+    "recall": 0.4277,
+    "cm": {
+      "tn": 19457,
+      "fp": 31,
+      "fn": 293,
+      "tp": 219
+    }
+  },
+  "Exp4_Cost_Optimal_Threshold": {
+    "threshold": 0.09,
+    "recall": 0.668,
+    "precision": 0.5213,
+    "f1_score": 0.5856,
+    "total_cost": 1674,
+    "missed_frauds_fn": 170,
+    "false_alarms_fp": 314
+  },
+  "Exp4_Target_Recall_F1_Optimized": {
+    "threshold": 0.1,
+    "recall": 0.6523,
+    "precision": 0.5557,
+    "f1_score": 0.6002,
+    "roc_auc": 0.9285,
+    "pr_auc": 0.6756
+  }
+}

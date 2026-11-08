@@ -1,0 +1,117 @@
+{
+  "Comment": "AWS Step Functions - Orchestration de l'investigation de fraude bancaire (Architecture Section 3.D)",
+  "StartAt": "ValidateTransaction",
+  "States": {
+    "ValidateTransaction": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "FraudDetection-ValidateEvent",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.validated_event",
+      "Next": "CalculateBehavioralSignals",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SendToDLQ"
+        }
+      ]
+    },
+    "CalculateBehavioralSignals": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "FraudDetection-BehavioralEngine",
+        "Payload.$": "$.validated_event.Payload"
+      },
+      "ResultPath": "$.behavioral_signals",
+      "Next": "ScoreMLModel"
+    },
+    "ScoreMLModel": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:invokeEndpoint",
+      "Parameters": {
+        "EndpointName": "fraud-detection-lgb-endpoint",
+        "Body.$": "$.behavioral_signals.Payload",
+        "ContentType": "application/json"
+      },
+      "ResultPath": "$.ml_detection",
+      "Next": "CheckRiskThreshold"
+    },
+    "CheckRiskThreshold": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.ml_detection.fraud_score",
+          "NumericGreaterThanEquals": 0.25,
+          "Next": "TriggerLLMInvestigation"
+        }
+      ],
+      "Default": "SaveLegitimateTransaction"
+    },
+    "TriggerLLMInvestigation": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 600,
+          "temperature": 0.1,
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "$.ml_detection"
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.llm_investigation",
+      "Next": "CreateDynamoDBAlert"
+    },
+    "CreateDynamoDBAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "FraudDetectionAlerts",
+        "Item": {
+          "alert_id": { "S.$": "$.validated_event.Payload.TransactionID" },
+          "status": { "S": "PENDING" },
+          "fraud_score": { "N.$": "$.ml_detection.fraud_score" }
+        }
+      },
+      "Next": "NotifyAnalystSNS"
+    },
+    "NotifyAnalystSNS": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:eu-west-3:123456789012:fraud-high-risk-alerts",
+        "Message.$": "$.llm_investigation.Payload"
+      },
+      "Next": "SaveLegitimateTransaction"
+    },
+    "SaveLegitimateTransaction": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "FraudDetectionTransactions",
+        "Item": {
+          "transaction_id": { "S.$": "$.validated_event.Payload.TransactionID" },
+          "fraud_score": { "N.$": "$.ml_detection.fraud_score" }
+        }
+      },
+      "End": true
+    },
+    "SendToDLQ": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "https://sqs.eu-west-3.amazonaws.com/123456789012/fraud-dlq",
+        "MessageBody.$": "$"
+      },
+      "End": true
+    }
+  }
+}

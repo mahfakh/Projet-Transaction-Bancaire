@@ -1,0 +1,42 @@
+# Configuration globale du prototype Agentic AI Fraud Detection
+
+project:
+  name: "agentic-fraud-detection-aws"
+  version: "1.0.0"
+  description: "Prototype académique de détection de fraude bancaire temps réel sur AWS"
+
+data:
+  raw_dir: "ieee-fraud-detection"
+  processed_dir: "data/processed"
+  models_dir: "data/models"
+  reports_dir: "data/reports"
+  train_sample_size: 100000  # Sous-échantillon représentatif pour entraînement rapide & stable
+  validation_split: 0.2
+  random_state: 42
+
+detection:
+  # Seuils de décision F3
+  thresholds:
+    low_risk: 0.20       # < 0.20 : transaction légitime (Faible risque)
+    investigate: 0.60    # 0.20 - 0.60 : à surveiller / risque modéré
+    high_risk: 0.80      # >= 0.80 : Risque très élevé (Alerte prioritaire)
+  model_type: "lightgbm" # "lightgbm" ou "xgboost" ou "random_forest"
+
+behavioral:
+  velocity_window_hours: 24
+  amount_deviation_sigma: 2.5
+  max_history_per_card: 50
+
+agent:
+  provider: "mock" # "bedrock", "sagemaker", "mock"
+  model_id: "anthropic.claude-3-sonnet-20240229-v1:0"
+  temperature: 0.1
+  max_tokens: 600
+
+aws:
+  mode: "local" # "local" (émulation complète sans frais) ou "live" (AWS Boto3 réel)
+  region: "eu-west-3"
+  s3_bucket: "fraud-detection-prototype-artifacts"
+  dynamodb_alerts_table: "FraudDetectionAlerts"
+  dynamodb_transactions_table: "FraudDetectionTransactions"
+  kinesis_stream_name: "banking-transactions-stream"

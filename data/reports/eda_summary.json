@@ -1,0 +1,46 @@
+{
+  "sample_size": 100000,
+  "train_transaction_columns": 394,
+  "train_identity_columns": 41,
+  "class_distribution": {
+    "legit_count": 97439,
+    "fraud_count": 2561,
+    "fraud_percentage": 2.561
+  },
+  "identity_join_rate_pct": 41.45,
+  "transaction_amt_statistics": {
+    "mean": 130.74335084999998,
+    "std": 206.02468419166766,
+    "min": 0.292,
+    "median": 75.0,
+    "max": 4829.95,
+    "fraud_mean_amt": 133.76044357672782,
+    "legit_mean_amt": 130.66405226859882
+  },
+  "top_card_networks": {
+    "visa": 65602,
+    "mastercard": 29599,
+    "american express": 3330,
+    "discover": 1462,
+    "nan": 7
+  },
+  "product_codes": {
+    "W": 56878,
+    "H": 15521,
+    "R": 13724,
+    "C": 11351,
+    "S": 2526
+  },
+  "top_missing_columns_pct": {
+    "D7": 93.928,
+    "dist2": 91.769,
+    "D13": 90.479,
+    "D12": 89.495,
+    "D14": 88.847,
+    "D6": 87.259,
+    "M7": 83.961,
+    "M9": 83.961,
+    "M8": 83.961,
+    "D9": 78.289
+  }
+}
