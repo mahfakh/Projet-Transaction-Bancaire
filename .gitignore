@@ -1,0 +1,87 @@
+# ==============================================================================
+# FICHIERS À NE PAS PUSHER SUR GITHUB (.gitignore)
+# ==============================================================================
+
+# 1. DONNÉES VOLUMINEUSES (CRITIQUE : GitHub bloque les fichiers > 100 Mo)
+# Le dossier ieee-fraud-detection pèse ~1.4 Go avec des CSV de plus de 600 Mo chacun
+ieee-fraud-detection/
+*.csv
+*.tsv
+*.parquet
+*.zip
+*.tar.gz
+
+# 2. ENVIRONNEMENT VIRTUEL & DÉPENDANCES
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# 3. SECRETS, CLÉS D'ACCÈS ET IDENTIFIANTS AWS (SÉCURITÉ CRITIQUE)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cer
+*.crt
+.aws/
+credentials
+
+# 4. DONNÉES D'EXÉCUTION LOCALE, ALERTES & AUDIT LOGS (BASE DE DONNÉES LOCALE)
+# On ignore les données générées dynamiquement lors des tests pour ne pas polluer le repo
+data/storage/*.json
+data/storage/*.jsonl
+data/reports/dlq_rejected_transactions.json
+!data/storage/.gitkeep
+
+# 5. CACHES PYTHON ET BYTECODE
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 6. TESTS & COUVERTURE
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# 7. LOGS ET RUNTIMES
+*.log
+*.sqlite3
+.streamlit/secrets.toml
+
+# 8. DOSSIERS SYSTÈMES & ÉDITEURS / AGENTS LOCAUX
+.agents/
+.claude/
+.gemini/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
