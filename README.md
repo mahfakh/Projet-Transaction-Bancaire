@@ -140,7 +140,25 @@ pip install -r requirements.txt
 
 ---
 
-### B. Validation par les Tests Unitaires & d'Intégration
+### B. Déploiement Total sur AWS (Serverless & Cloud)
+
+Pour déployer l'intégralité de l'infrastructure sur votre compte AWS (Kinesis, DynamoDB, S3, 5 fonctions Lambda, API Gateway, Amazon Bedrock et CloudWatch) :
+
+1. **Renseignez vos accès AWS** dans le fichier `.env` (à la racine du projet) :
+   ```dotenv
+   AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+   AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+   AWS_DEFAULT_REGION=eu-west-3
+   ```
+2. **Lancez le script de déploiement automatisé (Boto3)** :
+   ```powershell
+   python scripts/deploy_aws.py
+   ```
+   *Ce script package automatiquement les 5 fonctions Lambda, déploie la pile CloudFormation, téléverse les modèles ML sur S3 et bascule automatiquement `config/settings.yaml` en mode live.*
+
+---
+
+### C. Validation par les Tests Unitaires & d'Intégration
 Pour vérifier le bon fonctionnement de tous les modules (ingestion, DLQ, absence de fuite de cible, inférence ML, détection d'anomalies comportementales, agent LLM et audit) :
 ```bash
 pytest tests/test_fraud_system.py
@@ -148,7 +166,7 @@ pytest tests/test_fraud_system.py
 
 ---
 
-### C. Exploration des Données (EDA - F2)
+### D. Exploration des Données (EDA - F2)
 Pour analyser la distribution des transactions, le taux de fraude réel (~2.5 %) et les jointures Identity :
 ```bash
 python src/data/explorer.py
@@ -156,7 +174,7 @@ python src/data/explorer.py
 
 ---
 
-### D. Benchmark & Expérimentations d'Optimisation ML
+### E. Benchmark & Expérimentations d'Optimisation ML
 Pour reproduire la comparaison (Feature Engineering, SMOTE vs `scale_pos_weight`, analyse coût métier bancaire et recherche de seuils optimaux) :
 ```bash
 python src/models/experiment.py
@@ -164,7 +182,7 @@ python src/models/experiment.py
 
 ---
 
-### E. Entraînement du Modèle Champion (F3)
+### F. Entraînement du Modèle Champion (F3)
 Pour réentraîner le modèle LightGBM optimisé et régénérer les artefacts sérialisés dans `data/models/` :
 ```bash
 python src/models/train.py
@@ -172,7 +190,7 @@ python src/models/train.py
 
 ---
 
-### F. Injection de Données de Démonstration (Flux & Alertes)
+### G. Injection de Données de Démonstration (Flux & Alertes)
 Pour alimenter la base de données locale avec un lot initial de transactions simulées et d'alertes à réviser :
 ```bash
 python src/stream/seed_demo.py
@@ -180,7 +198,7 @@ python src/stream/seed_demo.py
 
 ---
 
-### G. Lancement du Tableau de Bord Streamlit (F7)
+### H. Lancement du Tableau de Bord Streamlit (F7)
 Pour démarrer l'interface web de supervision et de revue analyste :
 
 ```bash
