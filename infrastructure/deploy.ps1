@@ -46,7 +46,9 @@ if (-not $SkipBuild) {
     Invoke-Checked { docker build --platform linux/amd64 --provenance=false -t "${Repository}:$tag" . } "docker build"
 
     Write-Host "== Envoi unique de l'image vers ECR" -ForegroundColor Cyan
-    Invoke-Checked { & $aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $registry } "connexion à ECR"
+    # Le tube passe par cmd : Windows PowerShell 5.1 altère les données transmises entre deux
+    # programmes natifs (retour chariot ajouté), ce qui corrompt le mot de passe ECR (erreur 400).
+    Invoke-Checked { cmd /c "`"$aws`" ecr get-login-password --region $Region | docker login --username AWS --password-stdin $registry" } "connexion à ECR"
     Invoke-Checked { docker tag "${Repository}:$tag" $imageUri } "docker tag"
     Invoke-Checked { docker push $imageUri } "docker push"
 } else {
