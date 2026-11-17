@@ -30,9 +30,9 @@ class TransactionStreamGenerator:
 
     def __init__(
         self,
-        dataset_path: str = "ieee-fraud-detection/train_transaction.csv",
-        identity_path: str = "ieee-fraud-detection/train_identity.csv",
-        dlq_output_path: str = "data/reports/dlq_rejected_transactions.json",
+        dataset_path: str = str(BASE_DIR / "ieee-fraud-detection" / "train_transaction.csv"),
+        identity_path: str = str(BASE_DIR / "ieee-fraud-detection" / "train_identity.csv"),
+        dlq_output_path: str = str(BASE_DIR / "data" / "reports" / "dlq_rejected_transactions.json"),
     ) -> None:
         self.dataset_path = Path(dataset_path)
         self.identity_path = Path(identity_path)
@@ -40,12 +40,59 @@ class TransactionStreamGenerator:
         self.dlq_path.parent.mkdir(parents=True, exist_ok=True)
         self.rejected_events: List[Dict[str, Any]] = []
 
-        # Chargement d'un réservoir d'exemples réels
-        print("[Generator] Initialisation du réservoir de transactions...")
-        df_tr = pd.read_csv(self.dataset_path, nrows=5000)
-        df_id = pd.read_csv(self.identity_path, nrows=5000)
-        self.pool = pd.merge(df_tr, df_id, on="TransactionID", how="left")
-        print(f"[Generator] Réservoir prêt avec {len(self.pool)} transactions réelles.")
+        # Réservoir d'exemples réels si le dataset IEEE-CIS est présent ; sinon mode synthétique
+        # (le dataset fait ~600 Mo et n'est pas versionné : le générateur doit fonctionner sans).
+        self.pool: Optional[pd.DataFrame] = None
+        if self.dataset_path.exists():
+            print("[Generator] Initialisation du réservoir de transactions...")
+            df_tr = pd.read_csv(self.dataset_path, nrows=5000)
+            df_id = pd.read_csv(self.identity_path, nrows=5000) if self.identity_path.exists() else None
+            self.pool = pd.merge(df_tr, df_id, on="TransactionID", how="left") if df_id is not None else df_tr
+            print(f"[Generator] Réservoir prêt avec {len(self.pool)} transactions réelles.")
+        else:
+            print("[Generator] Dataset IEEE-CIS absent : génération de transactions synthétiques.")
+
+    @staticmethod
+    def _synthetic_row(fraudulent: bool) -> Dict[str, Any]:
+        """Transaction synthétique au format IEEE-CIS (champs utilisés par le modèle et le moteur F4).
+
+        Les profils frauduleux reprennent des tendances connues du dataset : produit 'C',
+        domaines email anonymes, montants atypiques, terminal mobile peu courant, et surtout
+        beaucoup d'adresses / cartes liées (C1, C8 élevés) pour presque aucun historique
+        de transactions (C13, C14 proches de 0) : profil typique d'une carte volée utilisée
+        sur un compte récent. Les variables C sont les plus importantes pour le modèle LightGBM ;
+        ce profil a été calibré par recherche aléatoire sur le modèle entraîné.
+        """
+        card1 = random.choice([9500, 10616, 12695, 13926, 15885, 17188])  # petit nombre de cartes => historique F4
+        card4 = random.choice(["visa", "mastercard", "discover", "american express"])
+        addr1 = random.choice([204.0, 264.0, 299.0, 315.0, 325.0, 441.0])
+        if fraudulent:
+            return {
+                "TransactionAmt": round(random.uniform(250.0, 2500.0), 2),
+                "ProductCD": "C",
+                "card1": card1, "card4": card4, "card6": "credit", "addr1": addr1,
+                "P_emaildomain": random.choice(["anonymous.com", "protonmail.com", "mail.com"]),
+                "DeviceType": "mobile",
+                "DeviceInfo": random.choice(["SM-G960F", "Moto G (5)", "rv:57.0"]),
+                "dist1": float(random.randint(150, 2000)),
+                "C1": float(random.randint(5, 100)), "C2": float(random.randint(5, 100)),
+                "C8": float(random.randint(3, 100)), "C12": float(random.randint(0, 10)),
+                "C13": float(random.randint(0, 1)), "C14": float(random.randint(0, 1)),
+                "D1": float(random.randint(0, 10)), "D15": float(random.randint(0, 10)),
+                "isFraud": 1,
+            }
+        return {
+            "TransactionAmt": round(random.uniform(10.0, 180.0), 2),
+            "ProductCD": random.choice(["W", "W", "W", "H", "R"]),
+            "card1": card1, "card4": card4, "card6": "debit", "addr1": addr1,
+            "P_emaildomain": random.choice(["gmail.com", "yahoo.com", "hotmail.com"]),
+            "DeviceType": "desktop",
+            "DeviceInfo": "Windows",
+            "dist1": float(random.randint(0, 30)),
+            "C1": 1.0, "C2": 1.0, "C8": 0.0, "C12": 0.0, "C13": float(random.randint(1, 5)), "C14": 1.0,
+            **{d: float(random.randint(60, 400)) for d in ("D1", "D2", "D15")},
+            "isFraud": 0,
+        }
 
     def validate_event(self, raw_data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """Valide la conformité de l'événement entrant (F1)."""
@@ -94,7 +141,9 @@ class TransactionStreamGenerator:
                 return None
 
         # Sélection d'une ligne de base du dataset
-        if scenario == "fraud_burst":
+        if self.pool is None:
+            row = self._synthetic_row(fraudulent=(scenario == "fraud_burst" or random.random() < 0.05))
+        elif scenario == "fraud_burst":
             # Chercher une fraude avérée dans le réservoir
             frauds = self.pool[self.pool["isFraud"] == 1]
             row = frauds.sample(1).iloc[0].to_dict() if not frauds.empty else self.pool.sample(1).iloc[0].to_dict()

@@ -33,10 +33,12 @@ class FraudScorer:
 
     def __init__(
         self,
-        model_path: str = "data/models/fraud_detector_model.joblib",
-        preprocessor_path: str = "data/models/preprocessor.joblib",
-        config_path: str = "config/settings.yaml",
+        model_path: str = str(BASE_DIR / "data" / "models" / "fraud_detector_model.joblib"),
+        preprocessor_path: str = str(BASE_DIR / "data" / "models" / "preprocessor.joblib"),
+        config_path: str = str(BASE_DIR / "config" / "settings.yaml"),
     ) -> None:
+        # Chemins ancrés sur la racine du projet (et non le dossier courant) :
+        # indispensable dans la Lambda, où le dossier de travail diffère.
         self.model_path = Path(model_path)
         self.preprocessor_path = Path(preprocessor_path)
 
@@ -54,13 +56,13 @@ class FraudScorer:
 
         # Chargement optionnel du Feature Engineer
         self.feature_engineer = None
-        fe_path = Path("data/models/feature_engineer.joblib")
+        fe_path = BASE_DIR / "data" / "models" / "feature_engineer.joblib"
         if fe_path.exists():
             self.feature_engineer = joblib.load(fe_path)
 
         # Métadonnées
         self.model_version = "lgb_production_v1"
-        metrics_file = Path("data/reports/model_metrics.json")
+        metrics_file = BASE_DIR / "data" / "reports" / "model_metrics.json"
         if metrics_file.exists():
             with open(metrics_file, "r", encoding="utf-8") as f:
                 meta = json.load(f)

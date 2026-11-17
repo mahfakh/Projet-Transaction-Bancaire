@@ -33,6 +33,7 @@ from src.agent.schemas import (
 )
 from src.aws.adapter import CloudStorageAdapter
 from src.behavioral.context_engine import BehavioralContextEngine
+from src.config import get_config
 from src.models.scorer import FraudScorer
 
 
@@ -41,14 +42,16 @@ class FraudDetectionPipeline:
 
     def __init__(
         self,
-        config_path: str = "config/settings.yaml",
-        mode: str = "local",
+        config_path: str = str(BASE_DIR / "config" / "settings.yaml"),
+        mode: Optional[str] = None,  # par défaut : configuration (APP_MODE)
     ) -> None:
-        self.mode = mode
+        self.mode = mode or get_config().mode
         self.context_engine = BehavioralContextEngine()
         self.scorer = FraudScorer(config_path=config_path)
-        self.investigator = LLMInvestigator(provider="mock" if mode == "local" else "bedrock")
-        self.storage = CloudStorageAdapter(mode=mode)
+        # Le fournisseur LLM est réglé indépendamment du mode de stockage (LLM_PROVIDER),
+        # car le sandbox AWS Academy peut bloquer Bedrock même en mode "live".
+        self.investigator = LLMInvestigator()
+        self.storage = CloudStorageAdapter(mode=self.mode)
 
     def process_transaction(self, raw_tx: Dict[str, Any]) -> Dict[str, Any]:
         """Exécute le pipeline de bout en bout pour une transaction."""
@@ -107,7 +110,7 @@ class FraudDetectionPipeline:
 
 
 if __name__ == "__main__":
-    pipeline = FraudDetectionPipeline(mode="local")
+    pipeline = FraudDetectionPipeline()
     test_tx = {
         "TransactionID": "DEMO_1001",
         "TransactionAmt": 1250.0,

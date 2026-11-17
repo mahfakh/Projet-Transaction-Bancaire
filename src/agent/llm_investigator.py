@@ -16,6 +16,7 @@ Règles impératives :
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,6 +31,9 @@ from src.agent.schemas import (
     LLMInvestigation,
     RiskLevel,
 )
+from src.config import get_config
+
+VALID_UNCERTAINTY = {"LOW", "MODERATE", "HIGH"}
 
 
 # Prompt système hautement contraint pour l'Agent LLM
@@ -46,7 +50,21 @@ Règles strictes :
    - missing_information (list de strings)
    - uncertainty (string : LOW, MODERATE ou HIGH)
    - suggested_review (string : recommandation d'action pour l'analyste)
+7. Réponds UNIQUEMENT avec l'objet JSON, sans texte avant ni après.
 """
+
+
+def extract_json_object(text: str) -> Dict[str, Any]:
+    """Extrait le premier objet JSON d'une réponse de LLM.
+
+    Les modèles ajoutent parfois du texte ou des balises ```json autour de l'objet :
+    on isole la partie entre la première '{' et la dernière '}'.
+    """
+    cleaned = re.sub(r"```(?:json)?", "", text).strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start == -1 or end <= start:
+        raise ValueError("Aucun objet JSON trouvé dans la réponse du modèle")
+    return json.loads(cleaned[start : end + 1])
 
 
 class LLMInvestigator:
@@ -54,11 +72,17 @@ class LLMInvestigator:
 
     def __init__(
         self,
-        provider: str = "mock",  # "mock", "bedrock", "sagemaker"
-        aws_region: str = "eu-west-3",
+        provider: Optional[str] = None,  # "mock" ou "bedrock" ; par défaut : configuration (LLM_PROVIDER)
+        aws_region: Optional[str] = None,
+        model_id: Optional[str] = None,
     ) -> None:
-        self.provider = provider
-        self.aws_region = aws_region
+        cfg = get_config()
+        self.provider = (provider or cfg.llm_provider).lower()
+        self.aws_region = aws_region or cfg.aws_region
+        self.model_id = model_id or cfg.bedrock_model_id
+        self.temperature = cfg.llm_temperature
+        self.max_tokens = cfg.llm_max_tokens
+        self._bedrock_client = None
 
     def build_prompt_context(
         self,
@@ -175,38 +199,51 @@ class LLMInvestigator:
             missing_information=missing,
             uncertainty=uncertainty,
             suggested_review=suggested,
+            generated_by="rule_based",
         )
 
     def _call_bedrock(self, ctx: Dict[str, Any]) -> LLMInvestigation:
-        """Appel AWS Bedrock (Claude 3 / Llama 3) lorsque les identifiants AWS sont actifs."""
+        """Appel AWS Bedrock via l'API Converse (indépendante du fournisseur de modèle).
+
+        En cas d'échec (accès refusé dans le sandbox, réponse non conforme...), on bascule
+        sur l'analyse déterministe, mais en le signalant explicitement dans `generated_by`
+        pour que l'analyste et le rapport sachent quelle méthode a produit l'explication.
+        """
         try:
-            import boto3
-            client = boto3.client("bedrock-runtime", region_name=self.aws_region)
-            prompt_content = f"{SYSTEM_PROMPT}\n\nDonnées de transaction pour analyse :\n{json.dumps(ctx, ensure_ascii=False)}"
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 700,
-                "temperature": 0.1,
-                "messages": [{"role": "user", "content": prompt_content}],
-            })
-            resp = client.invoke_model(
-                modelId="anthropic.claude-3-sonnet-20240229-v1:0",
-                body=body,
+            if self._bedrock_client is None:
+                import boto3
+                self._bedrock_client = boto3.client("bedrock-runtime", region_name=self.aws_region)
+
+            resp = self._bedrock_client.converse(
+                modelId=self.model_id,
+                system=[{"text": SYSTEM_PROMPT}],
+                messages=[{
+                    "role": "user",
+                    "content": [{"text": "Données de transaction pour analyse :\n" + json.dumps(ctx, ensure_ascii=False)}],
+                }],
+                inferenceConfig={"maxTokens": self.max_tokens, "temperature": self.temperature},
             )
-            resp_body = json.loads(resp["body"].read())
-            raw_text = resp_body["content"][0]["text"]
-            parsed = json.loads(raw_text)
+            raw_text = resp["output"]["message"]["content"][0]["text"]
+            parsed = extract_json_object(raw_text)
+
+            uncertainty = str(parsed.get("uncertainty", "MODERATE")).upper()
+            if uncertainty not in VALID_UNCERTAINTY:
+                uncertainty = "MODERATE"
+
+            # La validation Pydantic rejette une sortie incomplète (ex. résumé manquant)
             return LLMInvestigation(
-                transaction_id=ctx["transaction_id"],
-                investigation_summary=parsed.get("investigation_summary", ""),
-                observed_risk_factors=parsed.get("observed_risk_factors", []),
-                missing_information=parsed.get("missing_information", []),
-                uncertainty=parsed.get("uncertainty", "MODERATE"),
-                suggested_review=parsed.get("suggested_review", ""),
+                transaction_id=ctx["transaction_id"],  # jamais repris du modèle : il ne doit rien inventer
+                investigation_summary=parsed["investigation_summary"],
+                observed_risk_factors=list(parsed.get("observed_risk_factors", [])),
+                missing_information=list(parsed.get("missing_information", [])),
+                uncertainty=uncertainty,
+                suggested_review=parsed["suggested_review"],
+                generated_by=f"bedrock:{self.model_id}",
             )
         except Exception as e:
-            print(f"[LLM Agent] Fallback vers analyse locale (Bedrock indisponible: {e})")
-            return self._generate_structured_analysis(ctx)
+            print(f"[LLM Agent] Bedrock indisponible, bascule sur l'analyse déterministe : {type(e).__name__}: {e}")
+            result = self._generate_structured_analysis(ctx)
+            return result.model_copy(update={"generated_by": "rule_based_fallback"})
 
 
 if __name__ == "__main__":
