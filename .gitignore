@@ -85,3 +85,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Artefacts de build AWS SAM
+.aws-sam/

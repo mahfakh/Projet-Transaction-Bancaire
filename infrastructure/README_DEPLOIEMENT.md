@@ -35,14 +35,19 @@ rôles interdite) ; région **us-east-1** ; Bedrock peut être bloqué (repli d�
 Depuis la racine du projet :
 
 ```powershell
-sam build          # construit l'image Docker (template : infrastructure/template.yaml, voir samconfig.toml)
-sam deploy         # affiche les ressources à créer puis demande confirmation (y)
+.\infrastructure\deploy.ps1
 ```
 
-Option : recevoir les alertes HIGH par e-mail (cliquer ensuite sur le lien de confirmation reçu) :
+Le script construit l'image Docker, l'envoie **une seule fois** dans le dépôt ECR `fraud-detection-lambda`
+(étiquetée avec le commit git, pour savoir quelle version tourne), puis déploie la pile SAM :
+les 3 fonctions Lambda partagent cette image.
+
+Options :
 
 ```powershell
-sam deploy --parameter-overrides "Environment=prototype LlmProvider=bedrock AlertEmail=vous@exemple.com"
+.\infrastructure\deploy.ps1 -AlertEmail "vous@exemple.com"   # e-mails pour les alertes HIGH (cliquer le lien de confirmation)
+.\infrastructure\deploy.ps1 -SkipBuild                         # modifier la pile sans renvoyer l'image
+.\infrastructure\deploy.ps1 -LlmProvider mock                  # désactiver les tentatives Bedrock
 ```
 
 ## Démonstration
@@ -63,6 +68,7 @@ Dans la console AWS : *Step Functions* → `fraud-investigation-prototype` (grap
 
 ```powershell
 sam delete --stack-name fraud-detection-prototype --region us-east-1
+aws ecr delete-repository --repository-name fraud-detection-lambda --force --region us-east-1
 ```
 
 ## Tester l'image localement (sans AWS)

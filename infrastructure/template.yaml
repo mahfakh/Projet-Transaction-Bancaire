@@ -7,11 +7,13 @@ Description: >
   aucune création de rôle IAM, services facturés à l'usage sauf le shard Kinesis).
 
 # Déploiement / suppression : voir infrastructure/README_DEPLOIEMENT.md
-#   sam build -t infrastructure/template.yaml
-#   sam deploy
-#   sam delete        <- supprime TOUT (à faire après la soutenance : le shard Kinesis coûte ~0,36 $/jour)
+#   .\infrastructure\deploy.ps1      <- construit l'image, l'envoie UNE fois dans ECR, déploie la pile
+#   sam delete                        <- supprime TOUT (à faire après la soutenance : le shard Kinesis coûte ~0,36 $/jour)
 
 Parameters:
+  ImageUri:
+    Type: String
+    Description: Image Docker dans ECR (construite et envoyée par infrastructure/deploy.ps1)
   Environment:
     Type: String
     Default: prototype
@@ -120,6 +122,7 @@ Resources:
       FunctionName: !Sub fraud-score-${Environment}
       Description: Consommateur Kinesis - validation, signaux comportementaux, score ML, déclenchement de l'investigation
       PackageType: Image
+      ImageUri: !Ref ImageUri   # même image pour les 3 fonctions (un seul envoi vers ECR)
       Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${LabRoleName}   # AWS Academy : rôle imposé
       ImageConfig:
         Command: [src.aws.lambda_handler.score_handler]
@@ -144,10 +147,6 @@ Resources:
               OnFailure:
                 Type: SQS
                 Destination: !GetAtt DeadLetterQueue.Arn
-    Metadata:
-      Dockerfile: Dockerfile
-      DockerContext: ..
-      DockerTag: v1
 
   InvestigateFunction:
     Type: AWS::Serverless::Function
@@ -155,15 +154,12 @@ Resources:
       FunctionName: !Sub fraud-investigate-${Environment}
       Description: Étape Step Functions - agent d'investigation (Bedrock ou analyse déterministe)
       PackageType: Image
+      ImageUri: !Ref ImageUri   # même image pour les 3 fonctions (un seul envoi vers ECR)
       Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${LabRoleName}   # AWS Academy : rôle imposé
       ImageConfig:
         Command: [src.aws.lambda_handler.investigate_handler]
       MemorySize: 512
       Timeout: 60
-    Metadata:
-      Dockerfile: Dockerfile
-      DockerContext: ..
-      DockerTag: v1
 
   CreateAlertFunction:
     Type: AWS::Serverless::Function
@@ -171,15 +167,12 @@ Resources:
       FunctionName: !Sub fraud-create-alert-${Environment}
       Description: Étape Step Functions - création de l'alerte pour revue humaine et métriques
       PackageType: Image
+      ImageUri: !Ref ImageUri   # même image pour les 3 fonctions (un seul envoi vers ECR)
       Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${LabRoleName}   # AWS Academy : rôle imposé
       ImageConfig:
         Command: [src.aws.lambda_handler.create_alert_handler]
       MemorySize: 512
       Timeout: 30
-    Metadata:
-      Dockerfile: Dockerfile
-      DockerContext: ..
-      DockerTag: v1
 
   # Rétention des logs limitée à 7 jours (coût de stockage CloudWatch)
   ScoreLogGroup:
