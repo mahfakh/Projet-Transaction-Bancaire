@@ -46,7 +46,8 @@ class FraudDetectionPipeline:
         mode: Optional[str] = None,  # par défaut : configuration (APP_MODE)
     ) -> None:
         self.mode = mode or get_config().mode
-        self.context_engine = BehavioralContextEngine()
+        # Historique des porteurs : mémoire en local, table DynamoDB en live (persistant entre Lambdas)
+        self.context_engine = BehavioralContextEngine.from_config(self.mode)
         self.scorer = FraudScorer(config_path=config_path)
         # Le fournisseur LLM est réglé indépendamment du mode de stockage (LLM_PROVIDER),
         # car le sandbox AWS Academy peut bloquer Bedrock même en mode "live".

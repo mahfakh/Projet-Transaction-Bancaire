@@ -355,3 +355,75 @@ def test_synthetic_generator_without_dataset(tmp_path):
     assert "isFraud" not in evt  # la cible ne fuit jamais dans l'événement ingéré
     assert gen.generate_event(scenario="invalid_event") is None
     assert len(gen.rejected_events) == 1
+
+
+# ==========================================================
+# Fix 2 : historique des porteurs persistant (DynamoDB)
+# ==========================================================
+
+from src.behavioral.history_store import DynamoHistoryStore
+
+
+class _FakeHistoryTable:
+    """Imite la table DynamoDB d'historique (refuse les float comme le vrai service)."""
+
+    def __init__(self):
+        self.items = {}
+
+    def get_item(self, Key, ConsistentRead=False):
+        item = self.items.get(Key["profile_key"])
+        return {"Item": item} if item else {}
+
+    def put_item(self, Item):
+        def check(v):
+            if isinstance(v, float):
+                raise TypeError("Float types are not supported. Use Decimal types instead.")
+            for x in (v.values() if isinstance(v, dict) else v if isinstance(v, list) else []):
+                check(x)
+        check(Item)
+        assert isinstance(Item["expires_at"], int)  # attribut TTL au format epoch
+        self.items[Item["profile_key"]] = Item
+
+
+def _tx(tx_id, amount, device, ts):
+    return {"TransactionID": tx_id, "user_or_card_key": "USER_42", "TransactionAmt": amount,
+            "DeviceInfo": device, "addr1": 299, "event_timestamp": ts}
+
+
+def test_history_survives_across_lambda_invocations():
+    """Deux moteurs distincts (= deux exécutions Lambda) partagent l'historique via DynamoDB."""
+    table = _FakeHistoryTable()
+
+    first_lambda = BehavioralContextEngine(history_store=DynamoHistoryStore("t", "us-east-1", table=table))
+    for i, amt in enumerate([40.0, 55.0, 48.0]):
+        first_lambda.analyze_and_update(_tx(f"TX_{i}", amt, "iPhone", f"2026-11-17T10:0{i}:00"))
+
+    # Nouvelle instance : mémoire vide, seule la table relie les deux exécutions
+    second_lambda = BehavioralContextEngine(history_store=DynamoHistoryStore("t", "us-east-1", table=table))
+    sig = second_lambda.analyze_and_update(_tx("TX_SPIKE", 1200.0, "Linux_PC", "2026-11-17T10:05:00"))
+
+    assert sig.transactions_last_24h == 4
+    assert sig.is_amount_abnormal is True
+    assert sig.device_changed is True
+    assert len(table.items["USER_42"]["events"]) == 4
+
+
+def test_history_is_idempotent_on_retry():
+    """Une nouvelle tentative Kinesis (même TransactionID) ne compte pas la transaction deux fois."""
+    engine = BehavioralContextEngine()
+    engine.analyze_and_update(_tx("TX_A", 50.0, "iPhone", "2026-11-17T10:00:00"))
+    first = engine.analyze_and_update(_tx("TX_B", 60.0, "iPhone", "2026-11-17T10:01:00"))
+    retry = engine.analyze_and_update(_tx("TX_B", 60.0, "iPhone", "2026-11-17T10:01:00"))
+
+    assert first.transactions_last_24h == retry.transactions_last_24h == 2
+    assert len(engine.store.get("USER_42")) == 2
+
+
+def test_history_window_and_cap():
+    """Fenêtre de 24h respectée, fuseaux mélangés acceptés, historique plafonné."""
+    engine = BehavioralContextEngine(max_history_per_card=3)
+    engine.analyze_and_update(_tx("OLD", 50.0, "iPhone", "2026-11-15T09:00:00Z"))  # avec fuseau, > 24h
+    for i in range(3):
+        sig = engine.analyze_and_update(_tx(f"NEW_{i}", 50.0, "iPhone", f"2026-11-17T10:0{i}:00"))
+    assert sig.transactions_last_24h == 3  # l'ancienne transaction est hors fenêtre
+    assert [e["transaction_id"] for e in engine.store.get("USER_42")] == ["NEW_0", "NEW_1", "NEW_2"]
