@@ -1,4 +1,4 @@
-# Déploiement complet sur AWS (AWS Academy Learner Lab), depuis la racine du projet :
+﻿# Déploiement complet sur AWS (AWS Academy Learner Lab), depuis la racine du projet :
 #   .\infrastructure\deploy.ps1
 #   .\infrastructure\deploy.ps1 -AlertEmail "vous@exemple.com"   # + e-mails pour les alertes HIGH
 #   .\infrastructure\deploy.ps1 -SkipBuild                         # redéploie la pile sans reconstruire l'image
