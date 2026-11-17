@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Prototype académique - Détection de fraude bancaire temps réel :
+  Kinesis -> Lambda (scoring ML) -> DynamoDB, investigation orchestrée par Step Functions,
+  alertes SNS et métriques CloudWatch. Adapté à AWS Academy Learner Lab (rôle LabRole,
+  aucune création de rôle IAM, services facturés à l'usage sauf le shard Kinesis).
+
+# Déploiement / suppression : voir infrastructure/README_DEPLOIEMENT.md
+#   sam build -t infrastructure/template.yaml
+#   sam deploy
+#   sam delete        <- supprime TOUT (à faire après la soutenance : le shard Kinesis coûte ~0,36 $/jour)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prototype
+    AllowedValues: [prototype, staging, production]
+  LabRoleName:
+    Type: String
+    Default: LabRole
+    Description: Rôle IAM existant (AWS Academy interdit la création de rôles)
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: E-mail recevant les alertes HIGH (vide = pas d'abonnement ; confirmer le mail reçu)
+  LlmProvider:
+    Type: String
+    Default: bedrock
+    AllowedValues: [mock, bedrock]
+    Description: bedrock = tente Bedrock puis repli déterministe signalé si l'accès est refusé
+  BedrockModelId:
+    Type: String
+    Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+
+Globals:
+  Function:
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        APP_MODE: live
+        ALERTS_TABLE: !Ref AlertsTable
+        TRANSACTIONS_TABLE: !Ref TransactionsTable
+        CARD_HISTORY_TABLE: !Ref CardHistoryTable
+        METRICS_NAMESPACE: BankingFraudDetection
+        LLM_PROVIDER: !Ref LlmProvider
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+
+Resources:
+  # ---------------------------------------------------------------- Ingestion (F1)
+  TransactionStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub banking-transactions-${Environment}
+      StreamModeDetails:
+        StreamMode: PROVISIONED   # 1 shard provisionné : ~0,015 $/h (le mode on-demand coûte plus cher au repos)
+      ShardCount: 1
+      RetentionPeriodHours: 24
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub fraud-dlq-${Environment}
+      MessageRetentionPeriod: 1209600   # 14 jours
+      SqsManagedSseEnabled: true
+
+  # ---------------------------------------------------------------- Persistance (F8)
+  AlertsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub FraudDetectionAlerts-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: alert_id, AttributeType: S}]
+      KeySchema: [{AttributeName: alert_id, KeyType: HASH}]
+      SSESpecification: {SSEEnabled: true}
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub FraudDetectionTransactions-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: transaction_id, AttributeType: S}]
+      KeySchema: [{AttributeName: transaction_id, KeyType: HASH}]
+      SSESpecification: {SSEEnabled: true}
+
+  CardHistoryTable:   # Historique glissant par porteur (F4), purgé après 30 jours d'inactivité
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub FraudDetectionCardHistory-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: profile_key, AttributeType: S}]
+      KeySchema: [{AttributeName: profile_key, KeyType: HASH}]
+      TimeToLiveSpecification: {AttributeName: expires_at, Enabled: true}
+      SSESpecification: {SSEEnabled: true}
+
+  # ---------------------------------------------------------------- Notification (F6)
+  HighRiskAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub fraud-high-risk-alerts-${Environment}
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref HighRiskAlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # ---------------------------------------------------------------- Calcul (F3, F4, F5)
+  ScoreFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub fraud-score-${Environment}
+      Description: Consommateur Kinesis - validation, signaux comportementaux, score ML, déclenchement de l'investigation
+      PackageType: Image
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${LabRoleName}   # AWS Academy : rôle imposé
+      ImageConfig:
+        Command: [src.aws.lambda_handler.score_handler]
+      MemorySize: 1024   # pandas + LightGBM ; plus de mémoire = plus de CPU = démarrage à froid plus court
+      Timeout: 120
+      Environment:
+        Variables:
+          DLQ_URL: !Ref DeadLetterQueue
+          STATE_MACHINE_ARN: !Ref InvestigationStateMachine
+      Events:
+        Stream:
+          Type: Kinesis
+          Properties:
+            Stream: !GetAtt TransactionStream.Arn
+            StartingPosition: LATEST
+            BatchSize: 50
+            MaximumBatchingWindowInSeconds: 1
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            DestinationConfig:
+              OnFailure:
+                Type: SQS
+                Destination: !GetAtt DeadLetterQueue.Arn
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ..
+      DockerTag: v1
+
+  InvestigateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub fraud-investigate-${Environment}
+      Description: Étape Step Functions - agent d'investigation (Bedrock ou analyse déterministe)
+      PackageType: Image
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${LabRoleName}   # AWS Academy : rôle imposé
+      ImageConfig:
+        Command: [src.aws.lambda_handler.investigate_handler]
+      MemorySize: 512
+      Timeout: 60
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ..
+      DockerTag: v1
+
+  CreateAlertFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub fraud-create-alert-${Environment}
+      Description: Étape Step Functions - création de l'alerte pour revue humaine et métriques
+      PackageType: Image
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${LabRoleName}   # AWS Academy : rôle imposé
+      ImageConfig:
+        Command: [src.aws.lambda_handler.create_alert_handler]
+      MemorySize: 512
+      Timeout: 30
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ..
+      DockerTag: v1
+
+  # Rétention des logs limitée à 7 jours (coût de stockage CloudWatch)
+  ScoreLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/fraud-score-${Environment}', RetentionInDays: 7}
+  InvestigateLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/fraud-investigate-${Environment}', RetentionInDays: 7}
+  CreateAlertLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/fraud-create-alert-${Environment}', RetentionInDays: 7}
+
+  # ---------------------------------------------------------------- Orchestration (Architecture D)
+  InvestigationStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub fraud-investigation-${Environment}
+      Type: STANDARD   # historique visuel de chaque exécution dans la console (idéal pour la démo)
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${LabRoleName}
+      DefinitionUri: step_functions_definition.json
+      DefinitionSubstitutions:
+        InvestigateFunctionArn: !GetAtt InvestigateFunction.Arn
+        CreateAlertFunctionArn: !GetAtt CreateAlertFunction.Arn
+        AlertTopicArn: !Ref HighRiskAlertTopic
+
+  # ---------------------------------------------------------------- Observabilité (F9)
+  HighRiskAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub HighRiskFraudAlertsSurge-${Environment}
+      AlarmDescription: Au moins 5 alertes HIGH en 5 minutes (métrique EMF publiée par la Lambda CreateAlert)
+      Namespace: BankingFraudDetection
+      MetricName: HighRiskAlertCount
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref HighRiskAlertTopic]
+
+Outputs:
+  KinesisStreamName:
+    Description: Flux à alimenter avec src/stream/kinesis_producer.py (--stream)
+    Value: !Ref TransactionStream
+  StateMachineArn:
+    Value: !Ref InvestigationStateMachine
+  DeadLetterQueueUrl:
+    Value: !Ref DeadLetterQueue
+  AlertsTableName:
+    Value: !Ref AlertsTable
+  TransactionsTableName:
+    Value: !Ref TransactionsTable
+  CardHistoryTableName:
+    Value: !Ref CardHistoryTable
+  AlertTopicArn:
+    Value: !Ref HighRiskAlertTopic

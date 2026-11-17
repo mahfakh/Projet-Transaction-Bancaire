@@ -1,0 +1,16 @@
+# Configuration AWS SAM : permet de lancer simplement `sam build` puis `sam deploy`
+version = 0.1
+
+[default.global.parameters]
+stack_name = "fraud-detection-prototype"
+region = "us-east-1"
+
+[default.build.parameters]
+template_file = "infrastructure/template.yaml"
+
+[default.deploy.parameters]
+resolve_s3 = true             # bucket S3 géré par SAM pour les artefacts de déploiement
+resolve_image_repos = true    # dépôt ECR créé automatiquement pour l'image Docker
+confirm_changeset = true      # affiche les ressources avant création et demande confirmation
+fail_on_empty_changeset = false
+parameter_overrides = "Environment=prototype LlmProvider=bedrock"

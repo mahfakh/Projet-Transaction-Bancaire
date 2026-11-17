@@ -1,0 +1,18 @@
+# Seuls config/, src/, data/models/ et data/reports/model_metrics.json entrent dans l'image
+.git
+.venv
+venv
+.env
+.aws
+.agents
+.claude
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+ieee-fraud-detection
+data/storage
+data/processed
+tests
+infrastructure
+src/dashboard

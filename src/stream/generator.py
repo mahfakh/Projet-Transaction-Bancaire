@@ -23,6 +23,7 @@ if str(BASE_DIR) not in sys.path:
 
 import pandas as pd
 from src.agent.schemas import TransactionEvent
+from src.stream.validation import validate_event
 
 
 class TransactionStreamGenerator:
@@ -95,21 +96,8 @@ class TransactionStreamGenerator:
         }
 
     def validate_event(self, raw_data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
-        """Valide la conformité de l'événement entrant (F1)."""
-        # Vérification des champs minimaux requis
-        required_fields = ["TransactionAmt"]
-        for field in required_fields:
-            if field not in raw_data or raw_data[field] is None:
-                return False, f"Champ obligatoire manquant : {field}"
-
-        try:
-            amt = float(raw_data["TransactionAmt"])
-            if amt <= 0:
-                return False, f"Montant invalide ou négatif : {amt}"
-        except (ValueError, TypeError):
-            return False, "Format de montant non numérique"
-
-        return True, None
+        """Valide la conformité de l'événement entrant (F1) — règles partagées avec la Lambda."""
+        return validate_event(raw_data)
 
     def reject_event(self, raw_data: Dict[str, Any], reason: str) -> None:
         """Place l'événement invalide en file de rejet / Dead-Letter Queue (F1)."""

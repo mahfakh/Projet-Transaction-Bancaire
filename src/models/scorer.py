@@ -84,6 +84,13 @@ class FraudScorer:
         else:
             return RiskLevel.LOW
 
+    @staticmethod
+    def behavioral_escalation(signals: Any) -> bool:
+        """Règle F4 : montant anormal ET (changement de terminal OU au moins 4 transactions en 24h)."""
+        if not getattr(signals, "is_amount_abnormal", False):
+            return False
+        return bool(getattr(signals, "device_changed", False)) or getattr(signals, "transactions_last_24h", 0) >= 4
+
     def extract_top_contributing_factors(
         self,
         tx_row: pd.Series,
@@ -148,6 +155,13 @@ class FraudScorer:
             factors.insert(0, f"Écart critique aux habitudes de dépenses (Ratio {behavioral_signals.amount_ratio_to_avg:.1f}x)")
         if hasattr(behavioral_signals, "device_changed") and behavioral_signals.device_changed:
             factors.append("Alerte comportementale : Changement soudain d'équipement de connexion")
+
+        # Escalade comportementale : le score ML n'est jamais modifié, mais une rupture
+        # comportementale forte déclenche l'investigation même si le modèle est rassurant
+        # (ex. carte compromise : montant anormal + nouveau terminal ou rafale de transactions).
+        if risk_level == RiskLevel.LOW and self.behavioral_escalation(behavioral_signals):
+            risk_level = RiskLevel.INVESTIGATE
+            factors.insert(0, "Escalade par règle comportementale (rupture forte malgré un score ML faible)")
 
         tx_id = str(tx_dict.get("TransactionID", tx_dict.get("transaction_id", "UNKNOWN")))
 
