@@ -16,7 +16,7 @@
      [ Contexte Comportemental (F4) ] (Vélocité 24h, Écart aux habitudes, Changement terminal)
                    │
                    ▼
-      [ Modèle ML LightGBM (F3) ] (Score de risque 0.0 - 1.0, ROC-AUC: 0.929, PR-AUC: 0.679)
+      [ Modèle ML LightGBM (F3) ] (Score de risque 0.0 - 1.0, ROC-AUC: 0.943, PR-AUC: 0.734)
                    │
          Score >= Seuil d'investigation ?
           ┌────────┴────────┐
@@ -40,7 +40,7 @@
 
 ## 2. Performances du Modèle de Détection (F3) & Résultats des Expérimentations
 
-Évaluation sur un jeu de test de validation indépendant (**stratifié avec fort déséquilibre de classes** ~2.5% de fraudes sur 150 000 transactions) :
+Évaluation sur un jeu de validation indépendant de 30 000 transactions (**stratifié, fort déséquilibre de classes** : ~2,5 % de fraudes ; entraînement sur 120 000). Source : `data/reports/model_metrics.json`.
 
 ### Comparatif des Cibles Expérimentales Recommandées
 
@@ -57,15 +57,23 @@
 
 | Seuil | Rappel (Fraudes Détectées) | Précision | F1-Score | Fraudes Manquées (FN) | Fausses Alertes (FP) | Profil d'Usage |
 | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **0.20** | **72.2 %** | **57.5 %** | **0.6402** | **285** | 412 | **Seuil d'alerte recommandé (Sécurité maximale)** |
-| **0.25** | **69.3 %** | **65.2 %** | **0.6716** | 315 | 287 | Seuil équilibré flux soutenu |
-| **0.35** | **65.4 %** | **76.6 %** | **0.7052** | 355 | 155 | **F1 maximal théorique** |
-| **0.50** | **58.8 %** | **85.2 %** | **0.6960** | 422 | 79 | Seuil conservateur (Trop de fraudes manquées) |
+| **0.20** | **72.2 %** | **57.5 %** | **0.6402** | **221** | 423 | **Seuil d'alerte recommandé (Sécurité maximale)** |
+| **0.25** | **69.3 %** | **65.2 %** | **0.6716** | 244 | 294 | Seuil équilibré flux soutenu |
+| **0.35** | **65.4 %** | **76.6 %** | **0.7052** | 275 | 159 | **F1 maximal théorique** |
+| **0.50** | **58.8 %** | **85.2 %** | **0.6960** | 327 | 81 | Seuil conservateur (Trop de fraudes manquées) |
 
 ### Enseignements des Expérimentations
 1. **SMOTE** : Conformément aux mises en garde, SMOTE produit une dégradation légère (ROC-AUC à 0.9201, PR-AUC à 0.654) due à l'interpolation synthétique dans un espace creux de 70+ variables.
-2. **`scale_pos_weight = 3.5`** : Bien supérieur à SMOTE, il pondère le gradient lors de la construction des arbres sans déformer la structure des données.
+2. **`scale_pos_weight`** : Bien supérieur à SMOTE (testé à 4.5 : rappel de 44 % à 55 % au seuil 0.50), il pondère le gradient sans déformer la structure des données. Le modèle final utilise 3.5.
 3. **Feature Engineering Comportemental** : Les ratios par porteur (`amt_to_card1_mean_ratio`), la décomposition temporelle de `TransactionDT` et les centimes ont augmenté le PR-AUC de **+0.055**.
+
+---
+
+## Déploiement AWS
+
+Le système est déployé en serverless sur AWS (AWS Academy Learner Lab) : Kinesis → Lambda (modèle embarqué dans une image Docker) → DynamoDB, investigation orchestrée par Step Functions, notification SNS, observabilité CloudWatch. Le guide complet (déploiement en une commande, démonstration, coûts, suppression) est dans [infrastructure/README_DEPLOIEMENT.md](infrastructure/README_DEPLOIEMENT.md).
+
+Les mêmes modules tournent en local (`APP_MODE=local`, stockage fichier, sans frais) ou sur AWS (`APP_MODE=live`), voir `.env.example`.
 
 ---
 
@@ -143,8 +151,9 @@ pip install -r requirements.txt
 ### B. Validation par les Tests Unitaires & d'Intégration
 Pour vérifier le bon fonctionnement de tous les modules (ingestion, DLQ, absence de fuite de cible, inférence ML, détection d'anomalies comportementales, agent LLM et audit) :
 ```bash
-pytest tests/test_fraud_system.py
+pytest tests
 ```
+(25 tests, sans appel AWS : Kinesis, SQS, Step Functions et DynamoDB sont simulés.)
 
 ---
 
