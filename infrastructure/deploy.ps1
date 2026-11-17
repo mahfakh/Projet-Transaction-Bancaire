@@ -59,7 +59,8 @@ if (-not $SkipBuild) {
 Write-Host "== Déploiement de la pile (CloudFormation via SAM)" -ForegroundColor Cyan
 $overrides = "ImageUri=$imageUri Environment=prototype LlmProvider=$LlmProvider"
 if ($AlertEmail) { $overrides += " AlertEmail=$AlertEmail" }
-Invoke-Checked { & $sam deploy --parameter-overrides $overrides --no-confirm-changeset } "sam deploy"
+# --image-repository : exigé par SAM pour les fonctions de type Image (l'image est déjà dans ECR, rien n'est renvoyé)
+Invoke-Checked { & $sam deploy --parameter-overrides $overrides --image-repository "$registry/$Repository" --no-confirm-changeset } "sam deploy"
 
 Write-Host "`n== Terminé. Ressources créées :" -ForegroundColor Green
 & $aws cloudformation describe-stacks --stack-name fraud-detection-prototype --region $Region --query "Stacks[0].Outputs[].[OutputKey,OutputValue]" --output table
