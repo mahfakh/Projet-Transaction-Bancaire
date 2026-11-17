@@ -13,8 +13,7 @@ Fonctionnalités :
 from __future__ import annotations
 
 import sys
-from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,6 +24,27 @@ if str(BASE_DIR) not in sys.path:
 import numpy as np
 
 from src.agent.schemas import BehavioralSignals, TransactionEvent
+from src.behavioral.history_store import InMemoryHistoryStore, build_history_store
+
+
+def _parse_timestamp(value: Any) -> Optional[datetime]:
+    """Convertit un horodatage ISO en datetime « naïf » comparable.
+
+    Les horodatages avec fuseau (ex. ...Z ou +01:00) sont ramenés en UTC puis le fuseau est
+    retiré, pour éviter l'erreur Python de comparaison entre dates avec et sans fuseau.
+    """
+    if isinstance(value, datetime):
+        dt = value
+    elif value:
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 class BehavioralContextEngine:
@@ -34,11 +54,17 @@ class BehavioralContextEngine:
         self,
         max_history_per_card: int = 50,
         amount_sigma_threshold: float = 2.5,
+        history_store: Any = None,
     ) -> None:
         self.max_history = max_history_per_card
         self.sigma_threshold = amount_sigma_threshold
-        # Stockage en mémoire : clé profil -> liste d'événements passés
-        self._history: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        # Historique par porteur : mémoire en local, DynamoDB en live (voir history_store.py)
+        self.store = history_store if history_store is not None else InMemoryHistoryStore()
+
+    @classmethod
+    def from_config(cls, mode: Optional[str] = None) -> "BehavioralContextEngine":
+        """Construit le moteur avec le stockage adapté au mode (local / live)."""
+        return cls(history_store=build_history_store(mode))
 
     def generate_profile_key(self, tx: Dict[str, Any]) -> str:
         """Génère une clé composite stable pour identifier le profil porteur."""
@@ -53,14 +79,16 @@ class BehavioralContextEngine:
     def analyze_and_update(self, tx: Dict[str, Any]) -> BehavioralSignals:
         """Analyse la transaction courante par rapport à l'historique et met à jour ce dernier."""
         profile_key = self.generate_profile_key(tx)
-        past_txs = self._history[profile_key]
+        tx_id = str(tx.get("TransactionID", tx.get("transaction_id", "")))
+        history = self.store.get(profile_key)
+
+        # Idempotence : si cette transaction est déjà dans l'historique (nouvelle tentative
+        # Kinesis après une erreur), on l'exclut du calcul et on ne la rajoute pas.
+        already_recorded = bool(tx_id) and any(e.get("transaction_id") == tx_id for e in history)
+        past_txs = [e for e in history if not (tx_id and e.get("transaction_id") == tx_id)]
 
         amount = float(tx.get("TransactionAmt", tx.get("amount", 0.0)))
-        current_time_str = tx.get("event_timestamp")
-        try:
-            current_time = datetime.fromisoformat(current_time_str) if current_time_str else datetime.now()
-        except Exception:
-            current_time = datetime.now()
+        current_time = _parse_timestamp(tx.get("event_timestamp")) or datetime.now()
 
         device = str(tx.get("DeviceInfo", tx.get("device_info", "Unknown")))
         location = str(tx.get("addr1", tx.get("ip_or_location", "Unknown")))
@@ -86,7 +114,7 @@ class BehavioralContextEngine:
             cutoff_24h = current_time - timedelta(hours=24)
             txs_last_24h = [
                 pt for pt in past_txs
-                if pt.get("timestamp", current_time) >= cutoff_24h
+                if (_parse_timestamp(pt.get("timestamp")) or current_time) >= cutoff_24h
             ]
             velocity = len(txs_last_24h) + 1  # Inclut la transaction en cours
 
@@ -115,21 +143,22 @@ class BehavioralContextEngine:
                 synthetic_notes=synthetic_notes,
             )
 
-        # Enregistrement dans l'historique glissant
-        self._history[profile_key].append({
-            "amount": amount,
-            "timestamp": current_time,
-            "device": device,
-            "location": location,
-        })
-        if len(self._history[profile_key]) > self.max_history:
-            self._history[profile_key].pop(0)
+        # Enregistrement dans l'historique glissant (N derniers événements), sauf doublon
+        if not already_recorded:
+            history.append({
+                "transaction_id": tx_id,
+                "amount": amount,
+                "timestamp": current_time.isoformat(),  # chaîne ISO : stockable en JSON / DynamoDB
+                "device": device,
+                "location": location,
+            })
+            self.store.put(profile_key, history[-self.max_history:])
 
         return signals
 
     def get_history_summary(self, profile_key: str) -> Dict[str, Any]:
         """Retourne un résumé de l'historique pour l'agent LLM ou le dashboard."""
-        txs = self._history.get(profile_key, [])
+        txs = self.store.get(profile_key)
         if not txs:
             return {"total_transactions": 0, "status": "Nouveau porteur de carte"}
         amounts = [t["amount"] for t in txs]

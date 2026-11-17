@@ -73,6 +73,10 @@ class LLMInvestigation(BaseModel):
     missing_information: List[str] = Field(default_factory=list, description="Données absentes pour certifier")
     uncertainty: str = Field(default="MODERATE", description="Niveau d'incertitude (LOW, MODERATE, HIGH)")
     suggested_review: str = Field(..., description="Recommandation d'investigation pour l'analyste humain")
+    generated_by: str = Field(
+        default="rule_based",
+        description="Origine de l'analyse : 'rule_based', 'bedrock:<model_id>' ou 'rule_based_fallback' (Bedrock en échec)",
+    )
     disclaimer: str = Field(
         default="Avis généré automatiquement pour assistance humaine. Ne constitue pas un blocage automatique.",
         description="Mention obligatoire d'assistance non décisionnelle"

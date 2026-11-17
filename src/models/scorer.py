@@ -33,10 +33,12 @@ class FraudScorer:
 
     def __init__(
         self,
-        model_path: str = "data/models/fraud_detector_model.joblib",
-        preprocessor_path: str = "data/models/preprocessor.joblib",
-        config_path: str = "config/settings.yaml",
+        model_path: str = str(BASE_DIR / "data" / "models" / "fraud_detector_model.joblib"),
+        preprocessor_path: str = str(BASE_DIR / "data" / "models" / "preprocessor.joblib"),
+        config_path: str = str(BASE_DIR / "config" / "settings.yaml"),
     ) -> None:
+        # Chemins ancrés sur la racine du projet (et non le dossier courant) :
+        # indispensable dans la Lambda, où le dossier de travail diffère.
         self.model_path = Path(model_path)
         self.preprocessor_path = Path(preprocessor_path)
 
@@ -54,13 +56,13 @@ class FraudScorer:
 
         # Chargement optionnel du Feature Engineer
         self.feature_engineer = None
-        fe_path = Path("data/models/feature_engineer.joblib")
+        fe_path = BASE_DIR / "data" / "models" / "feature_engineer.joblib"
         if fe_path.exists():
             self.feature_engineer = joblib.load(fe_path)
 
         # Métadonnées
         self.model_version = "lgb_production_v1"
-        metrics_file = Path("data/reports/model_metrics.json")
+        metrics_file = BASE_DIR / "data" / "reports" / "model_metrics.json"
         if metrics_file.exists():
             with open(metrics_file, "r", encoding="utf-8") as f:
                 meta = json.load(f)
@@ -81,6 +83,13 @@ class FraudScorer:
             return RiskLevel.INVESTIGATE
         else:
             return RiskLevel.LOW
+
+    @staticmethod
+    def behavioral_escalation(signals: Any) -> bool:
+        """Règle F4 : montant anormal ET (changement de terminal OU au moins 4 transactions en 24h)."""
+        if not getattr(signals, "is_amount_abnormal", False):
+            return False
+        return bool(getattr(signals, "device_changed", False)) or getattr(signals, "transactions_last_24h", 0) >= 4
 
     def extract_top_contributing_factors(
         self,
@@ -146,6 +155,13 @@ class FraudScorer:
             factors.insert(0, f"Écart critique aux habitudes de dépenses (Ratio {behavioral_signals.amount_ratio_to_avg:.1f}x)")
         if hasattr(behavioral_signals, "device_changed") and behavioral_signals.device_changed:
             factors.append("Alerte comportementale : Changement soudain d'équipement de connexion")
+
+        # Escalade comportementale : le score ML n'est jamais modifié, mais une rupture
+        # comportementale forte déclenche l'investigation même si le modèle est rassurant
+        # (ex. carte compromise : montant anormal + nouveau terminal ou rafale de transactions).
+        if risk_level == RiskLevel.LOW and self.behavioral_escalation(behavioral_signals):
+            risk_level = RiskLevel.INVESTIGATE
+            factors.insert(0, "Escalade par règle comportementale (rupture forte malgré un score ML faible)")
 
         tx_id = str(tx_dict.get("TransactionID", tx_dict.get("transaction_id", "UNKNOWN")))
 

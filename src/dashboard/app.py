@@ -40,15 +40,16 @@ st.set_page_config(
 )
 
 # Initialisation du stockage et pipeline en cache de session
+# Le mode (local / live AWS) est lu depuis la configuration : APP_MODE=live pour lire DynamoDB
 @st.cache_resource
 def get_pipeline():
-    return FraudDetectionPipeline(mode="local")
+    return FraudDetectionPipeline()
 
 @st.cache_resource
 def get_generator():
     return TransactionStreamGenerator()
 
-storage = CloudStorageAdapter(mode="local")
+storage = CloudStorageAdapter()
 pipeline = get_pipeline()
 generator = get_generator()
 
@@ -266,6 +267,7 @@ elif menu == "🚨 File des Alertes & Revue Analyste":
 
             st.markdown(f"**Degré d'incertitude du modèle IA :** `{inv.get('uncertainty', 'MODERATE')}`")
             st.markdown(f"**Recommandation d'action :** {inv.get('suggested_review', '')}")
+            st.caption(f"Source de l'analyse : `{inv.get('generated_by', 'rule_based')}`")
 
 # ==============================================================================
 # 4. VUE INVESTIGATION AGENT LLM
@@ -287,6 +289,7 @@ elif menu == "🧠 Investigations Agent LLM":
                 st.markdown(f"**Synthèse de l'Agent :** {inv.get('investigation_summary')}")
                 st.markdown(f"**Niveau d'incertitude :** `{inv.get('uncertainty')}`")
                 st.markdown(f"**Recommandation :** {inv.get('suggested_review')}")
+                st.caption(f"Source de l'analyse : `{inv.get('generated_by', 'rule_based')}`")
                 st.caption(f"Avertissement de gouvernance : {inv.get('disclaimer')}")
 
 # ==============================================================================

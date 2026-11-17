@@ -1,20 +1,19 @@
 """Orchestrateur du pipeline de détection et d'investigation (Architecture D & Flux de traitement).
 
-Coordonne le flux complet :
-Générateur / Ingestion -> Validation (F1)
-  -> Moteur comportemental (F4)
-  -> Modèle ML (F3)
-  -> Règle de seuillage
-  -> Agent LLM d'investigation (F5) si seuil dépassé
-  -> Persistance DynamoDB / S3 / Local (F8)
-  -> Notification & Supervision (F6, F9)
+Le pipeline est découpé en deux phases réutilisables :
+
+1. `score_and_record`     : moteur comportemental (F4) -> modèle ML (F3) -> persistance (F8)
+2. `investigate_and_alert`: agent LLM (F5) -> alerte pour revue humaine (F6)
+
+- En local, `process_transaction` enchaîne les deux phases dans le même processus.
+- Sur AWS, la phase 1 tourne dans la Lambda de scoring (consommateur Kinesis) et la phase 2
+  est orchestrée par AWS Step Functions (voir src/aws/lambda_handler.py et infrastructure/).
 """
 
 from __future__ import annotations
 
 import sys
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -33,7 +32,60 @@ from src.agent.schemas import (
 )
 from src.aws.adapter import CloudStorageAdapter
 from src.behavioral.context_engine import BehavioralContextEngine
-from src.models.scorer import FraudScorer
+from src.config import get_config
+
+# Champs de la transaction transmis à la phase d'investigation (principe de moindre privilège :
+# l'agent LLM et l'alerte ne reçoivent que ce qui leur est utile, pas les ~400 colonnes IEEE-CIS).
+INVESTIGATION_TX_FIELDS = (
+    "TransactionID", "TransactionAmt", "currency", "card4", "ProductCD",
+    "DeviceInfo", "P_emaildomain", "user_or_card_key", "event_timestamp",
+)
+
+
+def get_transaction_id(raw_tx: Dict[str, Any]) -> str:
+    return str(raw_tx.get("TransactionID", raw_tx.get("transaction_id", f"TX_{uuid.uuid4().hex[:8]}")))
+
+
+def minimal_transaction(raw_tx: Dict[str, Any]) -> Dict[str, Any]:
+    """Sous-ensemble pseudonymisé de la transaction, sérialisable en JSON."""
+    out: Dict[str, Any] = {}
+    for key in INVESTIGATION_TX_FIELDS:
+        value = raw_tx.get(key)
+        if value is None or (isinstance(value, float) and value != value):  # None ou NaN
+            continue
+        out[key] = value.item() if hasattr(value, "item") else value
+    out["TransactionID"] = get_transaction_id(raw_tx)
+    return out
+
+
+def needs_investigation(detection: DetectionResult) -> bool:
+    """Règle de seuillage : investigation si risque INVESTIGATE ou HIGH."""
+    return detection.risk_level in (RiskLevel.INVESTIGATE, RiskLevel.HIGH)
+
+
+def build_alert(
+    raw_tx: Dict[str, Any],
+    detection: DetectionResult,
+    investigation: Optional[LLMInvestigation],
+) -> AlertReview:
+    """Construit l'alerte destinée à l'analyste humain (F6)."""
+    tx_id = get_transaction_id(raw_tx)
+    return AlertReview(
+        alert_id=f"ALT_{tx_id}",
+        transaction_id=tx_id,
+        risk_level=detection.risk_level,
+        fraud_score=detection.fraud_score,
+        status=AlertStatus.PENDING,
+        transaction_data={
+            "amount": float(raw_tx.get("TransactionAmt", raw_tx.get("amount", 0.0))),
+            "card4": str(raw_tx.get("card4", "visa")),
+            "user_or_card_key": str(raw_tx.get("user_or_card_key", "")),
+            "device_info": str(raw_tx.get("DeviceInfo", "")),
+            "product_code": str(raw_tx.get("ProductCD", "")),
+        },
+        detection_result=detection.model_dump(mode="json"),
+        llm_investigation=investigation,
+    )
 
 
 class FraudDetectionPipeline:
@@ -41,55 +93,49 @@ class FraudDetectionPipeline:
 
     def __init__(
         self,
-        config_path: str = "config/settings.yaml",
-        mode: str = "local",
+        config_path: str = str(BASE_DIR / "config" / "settings.yaml"),
+        mode: Optional[str] = None,  # par défaut : configuration (APP_MODE)
     ) -> None:
-        self.mode = mode
-        self.context_engine = BehavioralContextEngine()
+        # Import local : le modèle (lightgbm, pandas...) n'est chargé que par les composants qui scorent
+        from src.models.scorer import FraudScorer
+
+        self.mode = mode or get_config().mode
+        # Historique des porteurs : mémoire en local, table DynamoDB en live (persistant entre Lambdas)
+        self.context_engine = BehavioralContextEngine.from_config(self.mode)
         self.scorer = FraudScorer(config_path=config_path)
-        self.investigator = LLMInvestigator(provider="mock" if mode == "local" else "bedrock")
-        self.storage = CloudStorageAdapter(mode=mode)
+        # Le fournisseur LLM est réglé indépendamment du mode de stockage (LLM_PROVIDER),
+        # car le sandbox AWS Academy peut bloquer Bedrock même en mode "live".
+        self.investigator = LLMInvestigator()
+        self.storage = CloudStorageAdapter(mode=self.mode)
+
+    # ---------- Phase 1 : scoring ----------
+    def score_and_record(self, raw_tx: Dict[str, Any]) -> Tuple[BehavioralSignals, DetectionResult]:
+        """Signaux comportementaux (F4) + score ML (F3) + enregistrement systématique (F8)."""
+        signals = self.context_engine.analyze_and_update(raw_tx)
+        detection = self.scorer.score_transaction(raw_tx, signals)
+        self.storage.save_transaction(raw_tx, detection)
+        return signals, detection
+
+    # ---------- Phase 2 : investigation ----------
+    def investigate_and_alert(
+        self, raw_tx: Dict[str, Any], detection: DetectionResult
+    ) -> Tuple[LLMInvestigation, AlertReview]:
+        """Agent LLM (F5) puis création de l'alerte pour revue humaine (F6)."""
+        investigation = self.investigator.investigate(raw_tx, detection)
+        alert = build_alert(raw_tx, detection, investigation)
+        self.storage.save_alert(alert)
+        return investigation, alert
 
     def process_transaction(self, raw_tx: Dict[str, Any]) -> Dict[str, Any]:
-        """Exécute le pipeline de bout en bout pour une transaction."""
-        tx_id = str(raw_tx.get("TransactionID", raw_tx.get("transaction_id", f"TX_{uuid.uuid4().hex[:8]}")))
-
-        # 1. Analyse comportementale et contexte historique (F4)
-        signals: BehavioralSignals = self.context_engine.analyze_and_update(raw_tx)
-
-        # 2. Détection et scoring ML (F3)
-        detection: DetectionResult = self.scorer.score_transaction(raw_tx, signals)
-
-        # 3. Enregistrement systématique de la transaction (F8)
-        self.storage.save_transaction(raw_tx, detection)
+        """Exécute le pipeline de bout en bout pour une transaction (mode local / démonstration)."""
+        tx_id = get_transaction_id(raw_tx)
+        signals, detection = self.score_and_record(raw_tx)
 
         investigation: Optional[LLMInvestigation] = None
         alert: Optional[AlertReview] = None
-
-        # 4. Déclenchement de l'Agent LLM si investigation requise (F5, F6)
-        # Seuil : risk_level != LOW (soit INVESTIGATE ou HIGH)
-        if detection.risk_level in [RiskLevel.INVESTIGATE, RiskLevel.HIGH]:
+        if needs_investigation(detection):
             # L'agent ne reçoit que le contexte autorisé
-            investigation = self.investigator.investigate(raw_tx, detection)
-
-            # Création de l'alerte pour l'analyste humain (F6)
-            alert = AlertReview(
-                alert_id=f"ALT_{tx_id}",
-                transaction_id=tx_id,
-                risk_level=detection.risk_level,
-                fraud_score=detection.fraud_score,
-                status=AlertStatus.PENDING,
-                transaction_data={
-                    "amount": float(raw_tx.get("TransactionAmt", raw_tx.get("amount", 0.0))),
-                    "card4": str(raw_tx.get("card4", "visa")),
-                    "user_or_card_key": str(raw_tx.get("user_or_card_key", "")),
-                    "device_info": str(raw_tx.get("DeviceInfo", "")),
-                    "product_code": str(raw_tx.get("ProductCD", "")),
-                },
-                detection_result=detection.model_dump(),
-                llm_investigation=investigation,
-            )
-            self.storage.save_alert(alert)
+            investigation, alert = self.investigate_and_alert(minimal_transaction(raw_tx), detection)
 
         return {
             "transaction_id": tx_id,
@@ -107,7 +153,7 @@ class FraudDetectionPipeline:
 
 
 if __name__ == "__main__":
-    pipeline = FraudDetectionPipeline(mode="local")
+    pipeline = FraudDetectionPipeline()
     test_tx = {
         "TransactionID": "DEMO_1001",
         "TransactionAmt": 1250.0,

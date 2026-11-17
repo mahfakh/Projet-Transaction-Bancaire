@@ -1,0 +1,12 @@
+# Configuration AWS SAM, utilisée par infrastructure/deploy.ps1 (qui fournit ImageUri)
+version = 0.1
+
+[default.global.parameters]
+stack_name = "fraud-detection-prototype"
+region = "us-east-1"
+
+[default.deploy.parameters]
+template_file = "infrastructure/template.yaml"
+resolve_s3 = true             # bucket S3 géré par SAM pour les artefacts de déploiement
+confirm_changeset = true      # en usage manuel : affiche les ressources et demande confirmation
+fail_on_empty_changeset = false

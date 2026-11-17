@@ -16,7 +16,7 @@ from src.stream.generator import TransactionStreamGenerator
 def seed_demo_data(count: int = 35) -> None:
     print(f"[Seed] Génération de {count} transactions de démonstration...")
     gen = TransactionStreamGenerator()
-    pipeline = FraudDetectionPipeline(mode="local")
+    pipeline = FraudDetectionPipeline()  # mode lu depuis la configuration (APP_MODE)
 
     scenarios = ["random", "random", "high_amount", "fraud_burst", "random"]
     alert_count = 0

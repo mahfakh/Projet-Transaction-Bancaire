@@ -1,0 +1,11 @@
+# Dépendances de l'image Lambda (sous-ensemble de requirements.txt).
+# Versions figées = celles qui ont servi à tester le modèle sérialisé (.joblib) :
+# un modèle picklé doit être rechargé avec les mêmes versions de bibliothèques.
+# boto3 est déjà fourni par l'image de base AWS Lambda.
+numpy==2.5.5
+pandas==3.1.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+joblib==1.6.0
+PyYAML==6.0.3
+pydantic==2.14.3

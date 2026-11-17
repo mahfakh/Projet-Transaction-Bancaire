@@ -27,16 +27,21 @@ behavioral:
   amount_deviation_sigma: 2.5
   max_history_per_card: 50
 
+# Chaque valeur ci-dessous peut être surchargée par une variable d'environnement
+# (voir src/config.py et .env.example). Sur AWS, le template injecte les vrais noms.
+
 agent:
-  provider: "mock" # "bedrock", "sagemaker", "mock"
-  model_id: "anthropic.claude-3-sonnet-20240229-v1:0"
+  provider: "mock" # "mock" (analyse déterministe sans frais) ou "bedrock"   [env: LLM_PROVIDER]
+  model_id: "us.anthropic.claude-haiku-4-5-20251001-v1:0"                      # [env: BEDROCK_MODEL_ID]
   temperature: 0.1
-  max_tokens: 600
+  max_tokens: 700
 
 aws:
-  mode: "local" # "local" (émulation complète sans frais) ou "live" (AWS Boto3 réel)
-  region: "eu-west-3"
-  s3_bucket: "fraud-detection-prototype-artifacts"
-  dynamodb_alerts_table: "FraudDetectionAlerts"
-  dynamodb_transactions_table: "FraudDetectionTransactions"
-  kinesis_stream_name: "banking-transactions-stream"
+  mode: "local" # "local" (émulation complète sans frais) ou "live" (AWS réel)  [env: APP_MODE]
+  region: "us-east-1" # AWS Academy Learner Lab : us-east-1 ou us-west-2 uniquement  [env: AWS_REGION]
+  s3_bucket: ""                                                                  # [env: S3_BUCKET]
+  dynamodb_alerts_table: "FraudDetectionAlerts"                                  # [env: ALERTS_TABLE]
+  dynamodb_transactions_table: "FraudDetectionTransactions"                      # [env: TRANSACTIONS_TABLE]
+  dynamodb_card_history_table: "FraudDetectionCardHistory"                       # [env: CARD_HISTORY_TABLE]
+  kinesis_stream_name: "banking-transactions-stream"                             # [env: KINESIS_STREAM]
+  metrics_namespace: "BankingFraudDetection"                                     # [env: METRICS_NAMESPACE]
